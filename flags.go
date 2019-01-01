@@ -14,7 +14,7 @@ import (
 const (
 	// Flag defaults.
 	defaultLocation = "ca"
-	defaultDataSize = 1024
+	defaultDataSize = 10240
 	tmnDomain       = "testmy.net"
 )
 

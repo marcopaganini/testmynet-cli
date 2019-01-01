@@ -3,7 +3,7 @@
 // See instructions in the README.md file that accompanies this program.
 //
 // (C) by Marco Paganini <paganini AT paganini DOT net>
-
+//
 package main
 
 import (
@@ -14,8 +14,10 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/marcopaganini/logger"
 )
 
@@ -28,6 +30,30 @@ var (
 	// Generic logging object
 	log *logger.Logger
 )
+
+// WriteCounter counts the number of bytes written to it. It implements to the io.Writer
+// interface and we can pass this into io.TeeReader() which will report progress on each
+// write cycle.
+type WriteCounter struct {
+	Total uint64
+}
+
+func (wc *WriteCounter) Write(p []byte) (int, error) {
+	n := len(p)
+	wc.Total += uint64(n)
+	wc.PrintProgress()
+	return n, nil
+}
+
+func (wc WriteCounter) PrintProgress() {
+	// Clear the line by using a character return to go back to the start and remove
+	// the remaining characters by filling it with spaces
+	fmt.Printf("\r%s", strings.Repeat(" ", 35))
+
+	// Return again and print current status of download
+	// We use the humanize package to print the bytes in a meaningful way (e.g. 10 MB)
+	fmt.Printf("\rDownloading... %s complete", humanize.Bytes(wc.Total))
+}
 
 // download retrieves test data from test servers and returns the number of
 // bytes effectively read and the time it took to read those bytes.
@@ -49,7 +75,11 @@ func download(server string, datasize int, dryrun bool) (int64, time.Duration, e
 		// Timed download
 		tstart := time.Now()
 
-		written, err = io.Copy(ioutil.Discard, res.Body)
+		//written, err = io.Copy(ioutil.Discard, res.Body)
+		// modified to use progress counter
+		counter := &WriteCounter{}
+		written, err = io.Copy(ioutil.Discard, io.TeeReader(res.Body, counter))
+
 		if err != nil {
 			return 0, 0, err
 		}
@@ -134,6 +164,13 @@ func main() {
 		log.Fatalf("Error: %s\n", err)
 	}
 
+	// Don't overload testmy.net (unless force is set).
+	if !opt.force {
+		if err := overloadProtection(stateFile, time.Duration(minDurationMinutes*time.Minute)); err != nil {
+			log.Fatalf("Error: %s\n", err)
+		}
+	}
+
 	// Set verbose level
 	verbose := int(opt.verbose)
 	if verbose > 0 {
@@ -145,19 +182,12 @@ func main() {
 		log.Fatalf("Error downloading data from %s: %v\n", opt.server, err)
 	}
 
-	// Don't overload testmy.net (unless force is set).
-	if !opt.force {
-		if err := overloadProtection(stateFile, time.Duration(minDurationMinutes*time.Minute)); err != nil {
-			log.Fatalf("Error: %s\n", err)
-		}
-	}
-
 	// Calculate bandwidth and print.
 	bw := (float64(bytes) * 8 / duration.Seconds()) / 1e6
 	if opt.csv {
-		fmt.Printf("%s,%d,%.2f,%.3f\n", opt.server, bytes, duration.Seconds(), bw)
+		fmt.Printf("\n%s,%s,%.2f,%.3f\n", opt.server, humanize.Bytes(uint64(bytes)), duration.Seconds(), bw)
 	} else {
-		fmt.Printf("Downloaded %d bytes from %s in %s. Bandwidth = %.3fMbps\n",
-			bytes, opt.server, duration, bw)
+		fmt.Printf("\nDownloaded %s bytes from %s in %s. Bandwidth = %.3fMbps\n",
+			humanize.Bytes(uint64(bytes)), opt.server, duration, bw)
 	}
 }
